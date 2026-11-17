@@ -1,0 +1,7 @@
+out/
+artifacts/
+*.tampered
+.DS_Store
+*.bak
+app/hello*
+dist/

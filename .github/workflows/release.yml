@@ -1,0 +1,139 @@
+# Learner release workflow — builds four artifacts that teach Build L0→L3.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Deny all by default; each job grants only what it needs.
+permissions: {}
+
+jobs:
+  # L2 clean: platform-signed provenance for an untampered binary (Build L2 baseline).
+  l2-clean:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: app/go.mod
+
+      - name: Build
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -C app -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -o "${GITHUB_WORKSPACE}/dist/hello-l2" .
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/hello-l2
+
+      - name: Copy attestation bundle
+        run: cp "${{ steps.attest.outputs.bundle-path }}" dist/hello-l2.bundle.jsonl
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hello-l2
+          path: dist/*
+
+  # L2 pwned: compromised action swaps the binary mid-job; platform still signs it (L2 limit).
+  l2-pwned:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: app/go.mod
+
+      - name: Build
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -C app -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -o "${GITHUB_WORKSPACE}/dist/hello-l2-pwned" .
+
+      - name: fancy-lint (simulated compromised action)
+        uses: ./.github/actions/fancy-lint
+        with:
+          target: dist/hello-l2-pwned
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/hello-l2-pwned
+
+      - name: Copy attestation bundle
+        run: cp "${{ steps.attest.outputs.bundle-path }}" dist/hello-l2-pwned.bundle.jsonl
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hello-l2-pwned
+          path: dist/*
+
+  # L3: isolated reusable builder in a separate repo the learner cannot modify (Build L3).
+  l3:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: geet-we45/slsa-lab-builder/.github/workflows/build.yml@v1
+    with:
+      artifact-name: hello-l3
+      go-dir: app
+
+  # L3 forge: Mallory builds evil locally in this workflow and self-attests — fails L3 policy.
+  l3-forge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: app/go.mod
+
+      - name: Build with evil tag (Mallory)
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -C app -tags evil -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -o "${GITHUB_WORKSPACE}/dist/hello-l3-forged" .
+
+      - name: Attest from this workflow (not the trusted builder)
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/hello-l3-forged
+
+      - name: Copy attestation bundle
+        run: cp "${{ steps.attest.outputs.bundle-path }}" dist/hello-l3-forged.bundle.jsonl
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hello-l3-forged
+          path: dist/*
